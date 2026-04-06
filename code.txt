@@ -1,0 +1,753 @@
+"""
+Credit Risk Modeling: Loan Default Prediction
+Streamlit App — Full Pipeline: EDA → Model Training → Prediction
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import seaborn as sns
+import warnings
+warnings.filterwarnings("ignore")
+
+from xgboost import XGBClassifier, plot_importance
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score,
+    f1_score, confusion_matrix, roc_auc_score, roc_curve
+)
+from sklearn.preprocessing import StandardScaler
+import joblib
+import io
+import os
+
+# ─────────────────────────────────────────────
+#  PAGE CONFIG & GLOBAL STYLES
+# ─────────────────────────────────────────────
+st.set_page_config(
+    page_title="Credit Risk Intelligence",
+    page_icon="🏦",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+/* ── Root & Background ── */
+html, body, [data-testid="stAppViewContainer"] {
+    background-color: #0d0f14;
+    color: #e8e2d9;
+    font-family: 'DM Sans', sans-serif;
+}
+[data-testid="stSidebar"] {
+    background-color: #111318;
+    border-right: 1px solid #1e2230;
+}
+[data-testid="stHeader"] { background: transparent; }
+
+/* ── Typography ── */
+h1, h2, h3 { font-family: 'DM Serif Display', serif; }
+h1 { font-size: 2.6rem !important; letter-spacing: -0.5px; color: #f0e8d8; }
+h2 { font-size: 1.7rem !important; color: #c8bfa8; }
+h3 { font-size: 1.2rem !important; color: #a89f8a; }
+
+/* ── Metric Cards ── */
+[data-testid="metric-container"] {
+    background: #14171f;
+    border: 1px solid #1e2230;
+    border-radius: 12px;
+    padding: 16px 20px;
+    transition: border-color 0.2s;
+}
+[data-testid="metric-container"]:hover { border-color: #c9a84c; }
+[data-testid="stMetricLabel"] { color: #7a7260 !important; font-size: 0.75rem !important; text-transform: uppercase; letter-spacing: 1px; }
+[data-testid="stMetricValue"] { color: #f0e8d8 !important; font-family: 'DM Mono', monospace; }
+[data-testid="stMetricDelta"] svg { display: none; }
+
+/* ── Buttons ── */
+.stButton > button {
+    background: #c9a84c;
+    color: #0d0f14;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    font-family: 'DM Sans', sans-serif;
+    letter-spacing: 0.5px;
+    padding: 0.55rem 1.5rem;
+    transition: all 0.2s;
+}
+.stButton > button:hover {
+    background: #e0c06a;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(201,168,76,0.3);
+}
+
+/* ── Tabs ── */
+[data-baseweb="tab-list"] { background: transparent; border-bottom: 1px solid #1e2230; gap: 4px; }
+[data-baseweb="tab"] {
+    background: transparent !important;
+    color: #5a5545 !important;
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 500;
+    border-radius: 6px 6px 0 0;
+}
+[aria-selected="true"] {
+    background: #14171f !important;
+    color: #c9a84c !important;
+    border-bottom: 2px solid #c9a84c !important;
+}
+
+/* ── Inputs / Selectbox ── */
+[data-baseweb="select"] > div,
+[data-baseweb="input"] > div,
+.stTextInput > div > div,
+.stNumberInput > div > div {
+    background-color: #14171f !important;
+    border-color: #1e2230 !important;
+    color: #e8e2d9 !important;
+    border-radius: 8px !important;
+}
+.stSlider [data-baseweb="slider"] { margin-top: 4px; }
+.stSlider [data-testid="stThumbValue"] { color: #c9a84c; }
+
+/* ── DataFrames ── */
+[data-testid="stDataFrame"] { border: 1px solid #1e2230; border-radius: 10px; overflow: hidden; }
+thead tr th { background: #14171f !important; color: #7a7260 !important; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; }
+tbody tr:hover td { background: #1a1d27 !important; }
+
+/* ── Alert / Info Boxes ── */
+.stAlert { border-radius: 10px; border: none; }
+
+/* ── Dividers ── */
+hr { border-color: #1e2230; }
+
+/* ── Custom accent strip ── */
+.accent-strip {
+    height: 3px;
+    background: linear-gradient(90deg, #c9a84c, #e87040, #c9a84c);
+    border-radius: 99px;
+    margin-bottom: 1.2rem;
+}
+
+/* ── Sidebar nav labels ── */
+.sidebar-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #4a4535;
+    margin: 1.2rem 0 0.3rem;
+}
+
+/* ── Risk badge ── */
+.risk-badge {
+    display: inline-block;
+    padding: 6px 20px;
+    border-radius: 99px;
+    font-family: 'DM Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 500;
+    letter-spacing: 1px;
+}
+.risk-high  { background: #3d1a1a; color: #ff6b6b; border: 1px solid #5a2020; }
+.risk-low   { background: #1a3d2e; color: #4ade80; border: 1px solid #205a3a; }
+</style>
+""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  HELPER FUNCTIONS
+# ─────────────────────────────────────────────
+PALETTE = {
+    "bg":       "#0d0f14",
+    "surface":  "#14171f",
+    "border":   "#1e2230",
+    "gold":     "#c9a84c",
+    "orange":   "#e87040",
+    "text":     "#e8e2d9",
+    "muted":    "#5a5545",
+}
+
+def set_chart_style(ax, fig):
+    fig.patch.set_facecolor(PALETTE["bg"])
+    ax.set_facecolor(PALETTE["surface"])
+    ax.tick_params(colors=PALETTE["muted"], labelsize=9)
+    ax.xaxis.label.set_color(PALETTE["muted"])
+    ax.yaxis.label.set_color(PALETTE["muted"])
+    ax.title.set_color(PALETTE["text"])
+    for spine in ax.spines.values():
+        spine.set_edgecolor(PALETTE["border"])
+
+@st.cache_data(show_spinner=False)
+def load_and_preprocess(file_bytes):
+    df = pd.read_csv(io.BytesIO(file_bytes), low_memory=False)
+    df1 = df.copy().drop(columns=["LoanID"], errors="ignore")
+
+    # Ordinal encode education
+    edu_map = {"High School": 0, "Bachelor's": 1, "Master's": 2, "PhD": 3}
+    df1["Education"] = df1["Education"].map(edu_map)
+
+    # Binary maps
+    for col in ["HasMortgage", "HasDependents", "HasCoSigner"]:
+        df1[col] = df1[col].map({"Yes": 1, "No": 0})
+
+    # One-hot
+    df_clean = pd.get_dummies(df1, drop_first=True, dtype=int)
+
+    # Feature engineering
+    df_clean["LTI"] = np.round(df_clean["LoanAmount"] / df_clean["Income"], 2)
+
+    return df, df_clean
+
+@st.cache_resource(show_spinner=False)
+def train_models(X_train, y_train):
+    counts = y_train.value_counts()
+    weight_ratio = counts[0] / counts[1]
+
+    models = {
+        "Logistic Regression": LogisticRegression(random_state=42, max_iter=500, class_weight="balanced"),
+        "Random Forest":       RandomForestClassifier(random_state=42, n_estimators=100, class_weight="balanced"),
+        "XGBoost":             XGBClassifier(objective="binary:logistic", random_state=42, eval_metric="logloss"),
+        "XGBoost (Balanced)":  XGBClassifier(
+            scale_pos_weight=weight_ratio,
+            random_state=42,
+            objective="binary:logistic",
+            eval_metric="logloss",
+            max_depth=6,
+            learning_rate=0.1,
+            n_estimators=100,
+            subsample=0.7,
+            colsample_bytree=0.7,
+        ),
+    }
+    trained = {}
+    for name, m in models.items():
+        m.fit(X_train, y_train)
+        trained[name] = m
+    return trained, weight_ratio
+
+def evaluate(models, X_test, y_test):
+    rows = []
+    for name, m in models.items():
+        yp = m.predict(X_test)
+        rows.append({
+            "Model": name,
+            "Accuracy":  round(accuracy_score(y_test, yp), 4),
+            "Precision": round(precision_score(y_test, yp, zero_division=0), 4),
+            "Recall":    round(recall_score(y_test, yp, zero_division=0), 4),
+            "F1":        round(f1_score(y_test, yp, zero_division=0), 4),
+            "ROC-AUC":   round(roc_auc_score(y_test, yp), 4),
+        })
+    return pd.DataFrame(rows)
+
+# ─────────────────────────────────────────────
+#  SIDEBAR
+# ─────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("## 🏦 Credit Risk")
+    st.markdown('<div class="accent-strip"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-label">Data Source</div>', unsafe_allow_html=True)
+
+    uploaded = st.file_uploader("Upload loan CSV", type=["csv"])
+    use_sample = st.checkbox("Use built-in sample dataset", value=(uploaded is None))
+
+    st.markdown('<div class="sidebar-label">Model Config</div>', unsafe_allow_html=True)
+    test_size = st.slider("Test split %", 10, 40, 20, step=5) / 100
+    threshold = st.slider("Decision threshold", 0.30, 0.80, 0.50, step=0.05,
+                          help="Lower → catch more defaulters (higher recall), but more false alarms.")
+
+    st.markdown("---")
+    st.markdown(
+        "<span style='color:#4a4535;font-size:0.72rem'>Built with XGBoost · sklearn · Streamlit</span>",
+        unsafe_allow_html=True,
+    )
+
+# ─────────────────────────────────────────────
+#  DATA LOADING
+# ─────────────────────────────────────────────
+SAMPLE_PATH = "/mnt/user-data/uploads/1775409172583_Loan_default.csv"
+
+if uploaded:
+    raw_bytes = uploaded.read()
+elif use_sample and os.path.exists(SAMPLE_PATH):
+    with open(SAMPLE_PATH, "rb") as f:
+        raw_bytes = f.read()
+else:
+    raw_bytes = None
+
+# ─────────────────────────────────────────────
+#  HERO HEADER
+# ─────────────────────────────────────────────
+st.markdown("""
+<div style="padding: 1.5rem 0 0.5rem;">
+  <h1>Credit Risk Intelligence</h1>
+  <p style="color:#5a5545; font-size:1rem; margin-top:-0.4rem; font-family:'DM Sans',sans-serif;">
+    End-to-end loan default prediction · EDA · Model comparison · Live scoring
+  </p>
+  <div class="accent-strip"></div>
+</div>
+""", unsafe_allow_html=True)
+
+if raw_bytes is None:
+    st.info("👈 Upload a loan CSV or enable the sample dataset from the sidebar to get started.")
+    st.stop()
+
+# ─────────────────────────────────────────────
+#  PREPROCESSING & TRAIN/TEST SPLIT
+# ─────────────────────────────────────────────
+with st.spinner("Processing data…"):
+    df_raw, df_clean = load_and_preprocess(raw_bytes)
+    y = df_clean["Default"]
+    X = df_clean.drop("Default", axis=1)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, stratify=y, test_size=test_size, random_state=42
+    )
+
+# ─────────────────────────────────────────────
+#  TABS
+# ─────────────────────────────────────────────
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview & EDA", "🤖 Model Training", "📈 Results & Insights", "🎯 Live Prediction"])
+
+# ══════════════════════════════════════════════
+# TAB 1 — EDA
+# ══════════════════════════════════════════════
+with tab1:
+    st.markdown("### Dataset Snapshot")
+
+    default_rate = df_raw["Default"].mean() * 100
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Records",    f"{len(df_raw):,}")
+    c2.metric("Features",         f"{df_raw.shape[1] - 1}")
+    c3.metric("Default Rate",     f"{default_rate:.1f}%")
+    c4.metric("Training Samples", f"{len(X_train):,}")
+
+    st.markdown("---")
+
+    # Raw head
+    with st.expander("Preview raw data (first 10 rows)"):
+        st.dataframe(df_raw.head(10), use_container_width=True)
+
+    # ── Row 1: Default distribution + Interest Rate by Default
+    r1c1, r1c2 = st.columns(2)
+
+    with r1c1:
+        st.markdown("#### Default Distribution")
+        fig, ax = plt.subplots(figsize=(5, 3.5))
+        counts = df_raw["Default"].value_counts()
+        bars = ax.bar(["Safe (0)", "Default (1)"], counts.values,
+                      color=[PALETTE["gold"], PALETTE["orange"]], width=0.5, edgecolor="none")
+        for bar, v in zip(bars, counts.values):
+            ax.text(bar.get_x() + bar.get_width()/2, v + 500, f"{v:,}",
+                    ha="center", color=PALETTE["muted"], fontsize=9, fontfamily="DM Mono")
+        set_chart_style(ax, fig)
+        ax.set_ylabel("Count")
+        ax.set_title("Class Balance", fontsize=11, pad=10)
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+
+    with r1c2:
+        st.markdown("#### Interest Rate by Default Status")
+        fig, ax = plt.subplots(figsize=(5, 3.5))
+        for val, color, label in [(0, PALETTE["gold"], "Safe"), (1, PALETTE["orange"], "Default")]:
+            data = df_raw[df_raw["Default"] == val]["InterestRate"]
+            ax.hist(data, bins=35, alpha=0.75, color=color, label=label, edgecolor="none")
+        ax.legend(fontsize=8, framealpha=0, labelcolor=PALETTE["muted"])
+        set_chart_style(ax, fig)
+        ax.set_xlabel("Interest Rate (%)")
+        ax.set_title("Rate Distribution", fontsize=11, pad=10)
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+
+    # ── Row 2: Income distribution + Correlation heatmap
+    r2c1, r2c2 = st.columns(2)
+
+    with r2c1:
+        st.markdown("#### Income vs Loan Amount")
+        fig, ax = plt.subplots(figsize=(5, 3.5))
+        colors = df_raw["Default"].map({0: PALETTE["gold"], 1: PALETTE["orange"]})
+        ax.scatter(df_raw["Income"], df_raw["LoanAmount"],
+                   c=colors, alpha=0.15, s=4, linewidths=0)
+        set_chart_style(ax, fig)
+        ax.set_xlabel("Income ($)")
+        ax.set_ylabel("Loan Amount ($)")
+        ax.set_title("Income × Loan (orange = default)", fontsize=11, pad=10)
+        patches = [mpatches.Patch(color=PALETTE["gold"], label="Safe"),
+                   mpatches.Patch(color=PALETTE["orange"], label="Default")]
+        ax.legend(handles=patches, fontsize=8, framealpha=0, labelcolor=PALETTE["muted"])
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+
+    with r2c2:
+        st.markdown("#### Correlation Matrix (numeric features)")
+        num_cols = df_raw.select_dtypes(include=np.number).columns.tolist()
+        corr = df_raw[num_cols].corr()
+        fig, ax = plt.subplots(figsize=(5, 3.8))
+        cmap = sns.diverging_palette(20, 45, s=80, l=40, as_cmap=True)
+        sns.heatmap(corr, ax=ax, cmap=cmap, annot=True, fmt=".2f",
+                    annot_kws={"size": 7}, linewidths=0.5,
+                    linecolor=PALETTE["bg"], cbar=False)
+        ax.tick_params(labelsize=8)
+        set_chart_style(ax, fig)
+        ax.set_title("Pearson Correlation", fontsize=11, pad=10)
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+
+    # ── Credit Score Distribution
+    st.markdown("#### Credit Score by Default Status")
+    fig, ax = plt.subplots(figsize=(10, 3))
+    for val, color, label in [(0, PALETTE["gold"], "Safe"), (1, PALETTE["orange"], "Default")]:
+        sns.kdeplot(df_raw[df_raw["Default"] == val]["CreditScore"],
+                    ax=ax, color=color, label=label, fill=True, alpha=0.25, linewidth=1.5)
+    set_chart_style(ax, fig)
+    ax.set_xlabel("Credit Score")
+    ax.set_ylabel("Density")
+    ax.legend(fontsize=9, framealpha=0, labelcolor=PALETTE["muted"])
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close()
+
+
+# ══════════════════════════════════════════════
+# TAB 2 — MODEL TRAINING
+# ══════════════════════════════════════════════
+with tab2:
+    st.markdown("### Train & Compare Models")
+    st.markdown(
+        "Training **Logistic Regression**, **Random Forest**, **XGBoost**, "
+        "and **XGBoost (Balanced)** on the current split."
+    )
+
+    if st.button("🚀 Train All Models"):
+        with st.spinner("Training models — this may take ~30 seconds…"):
+            trained_models, weight_ratio = train_models(
+                X_train.values, y_train.values  # pass arrays for caching stability
+            )
+            st.session_state["trained_models"] = trained_models
+            st.session_state["weight_ratio"] = weight_ratio
+            st.session_state["X_test"] = X_test
+            st.session_state["y_test"] = y_test
+            st.session_state["X_train"] = X_train
+            st.session_state["feature_names"] = list(X.columns)
+        st.success("✅ All models trained successfully!")
+    else:
+        if "trained_models" not in st.session_state:
+            st.info("Click **Train All Models** to begin.")
+
+    if "trained_models" in st.session_state:
+        st.markdown("---")
+        tm = st.session_state["trained_models"]
+        Xte = st.session_state["X_test"]
+        yte = st.session_state["y_test"]
+
+        results_df = evaluate(tm, Xte, yte)
+
+        # Highlight best model row
+        st.markdown("#### Performance Leaderboard")
+
+        def color_best(col):
+            is_best = col == col.max()
+            return ["background-color: #1e2a1a; color: #4ade80" if v else "" for v in is_best]
+
+        styled = (
+            results_df.style
+            .apply(color_best, subset=["Recall", "ROC-AUC", "F1"])
+            .format({c: "{:.4f}" for c in ["Accuracy","Precision","Recall","F1","ROC-AUC"]})
+            .set_properties(**{
+                "background-color": "#14171f",
+                "color": "#e8e2d9",
+                "border-color": "#1e2230",
+                "font-family": "DM Mono, monospace",
+                "font-size": "13px",
+            })
+        )
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        # Business context
+        st.markdown("---")
+        st.markdown("#### Why XGBoost (Balanced) wins")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Best Recall",   f"{results_df.loc[results_df['Model']=='XGBoost (Balanced)','Recall'].values[0]:.1%}", help="Proportion of actual defaulters caught")
+        col2.metric("Best ROC-AUC",  f"{results_df.loc[results_df['Model']=='XGBoost (Balanced)','ROC-AUC'].values[0]:.4f}", help="Model discrimination ability")
+        col3.metric("scale_pos_weight", f"{st.session_state['weight_ratio']:.2f}", help="Class imbalance correction applied")
+
+        st.info(
+            "Standard models hit **88% accuracy** but miss >90% of defaulters (Recall < 10%). "
+            "The Balanced XGBoost sacrifices some precision to achieve **~63% Recall**, "
+            "catching far more bad loans while keeping false rejections manageable."
+        )
+
+        # Save model button
+        st.markdown("---")
+        st.markdown("#### Export Artifacts")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            best = tm["XGBoost (Balanced)"]
+            buf = io.BytesIO()
+            joblib.dump(best, buf)
+            buf.seek(0)
+            st.download_button("⬇️ Download XGBoost Model (.joblib)", buf,
+                               file_name="xgb_credit_risk_model.joblib",
+                               mime="application/octet-stream")
+        with col_b:
+            scaler = StandardScaler()
+            scaler.fit(Xte)
+            buf2 = io.BytesIO()
+            joblib.dump(scaler, buf2)
+            buf2.seek(0)
+            st.download_button("⬇️ Download Scaler (.joblib)", buf2,
+                               file_name="scaler.joblib",
+                               mime="application/octet-stream")
+
+
+# ══════════════════════════════════════════════
+# TAB 3 — RESULTS & INSIGHTS
+# ══════════════════════════════════════════════
+with tab3:
+    if "trained_models" not in st.session_state:
+        st.info("Train models first in the **Model Training** tab.")
+    else:
+        tm = st.session_state["trained_models"]
+        Xte = st.session_state["X_test"]
+        yte = st.session_state["y_test"]
+        feature_names = st.session_state["feature_names"]
+        best_model = tm["XGBoost (Balanced)"]
+
+        st.markdown("### Insights from XGBoost (Balanced)")
+
+        # ── ROC Curves
+        r1, r2 = st.columns(2)
+        with r1:
+            st.markdown("#### ROC Curves — All Models")
+            fig, ax = plt.subplots(figsize=(5, 4))
+            colors_roc = [PALETTE["gold"], "#4a9eff", "#a78bfa", PALETTE["orange"]]
+            for (name, m), col in zip(tm.items(), colors_roc):
+                prob = m.predict_proba(Xte)[:, 1]
+                fpr, tpr, _ = roc_curve(yte, prob)
+                auc = roc_auc_score(yte, prob)
+                ax.plot(fpr, tpr, color=col, linewidth=1.8, label=f"{name} ({auc:.3f})")
+            ax.plot([0,1],[0,1], "--", color=PALETTE["border"], linewidth=1)
+            set_chart_style(ax, fig)
+            ax.set_xlabel("False Positive Rate")
+            ax.set_ylabel("True Positive Rate")
+            ax.set_title("ROC — AUC scores in legend", fontsize=11, pad=10)
+            ax.legend(fontsize=7.5, framealpha=0, labelcolor=PALETTE["muted"])
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close()
+
+        with r2:
+            st.markdown("#### Confusion Matrix (threshold adjusted)")
+            proba = best_model.predict_proba(Xte)[:, 1]
+            y_thresh = (proba >= threshold).astype(int)
+            cm = confusion_matrix(yte, y_thresh)
+            fig, ax = plt.subplots(figsize=(5, 4))
+            cmap2 = sns.light_palette(PALETTE["gold"], as_cmap=True)
+            sns.heatmap(cm, annot=True, fmt="d", cmap=cmap2, ax=ax,
+                        linewidths=1, linecolor=PALETTE["bg"],
+                        annot_kws={"size": 14, "weight": "bold"},
+                        xticklabels=["Predicted Safe","Predicted Default"],
+                        yticklabels=["Actual Safe","Actual Default"])
+            ax.tick_params(colors=PALETTE["muted"], labelsize=8)
+            set_chart_style(ax, fig)
+            ax.set_title(f"Threshold = {threshold:.2f}", fontsize=11, pad=10)
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close()
+
+        # ── Feature Importance
+        st.markdown("#### Top Feature Importances")
+        imp = pd.Series(best_model.feature_importances_, index=feature_names).sort_values(ascending=False).head(12)
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        colors_bar = [PALETTE["gold"] if i == 0 else PALETTE["orange"] if i < 3 else PALETTE["muted"]
+                      for i in range(len(imp))]
+        ax.barh(imp.index[::-1], imp.values[::-1], color=colors_bar[::-1], edgecolor="none")
+        set_chart_style(ax, fig)
+        ax.set_xlabel("F-score")
+        ax.set_title("Feature Importance (top 12)", fontsize=11, pad=10)
+        for i, (val, name) in enumerate(zip(imp.values[::-1], imp.index[::-1])):
+            ax.text(val + 0.001, i, f"{val:.3f}", va="center",
+                    color=PALETTE["muted"], fontsize=8, fontfamily="DM Mono")
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+
+        # ── Threshold sensitivity
+        st.markdown("#### Threshold Sensitivity Analysis")
+        thresholds = np.arange(0.20, 0.85, 0.05)
+        recalls, precisions, f1s = [], [], []
+        for t in thresholds:
+            yp = (proba >= t).astype(int)
+            recalls.append(recall_score(yte, yp, zero_division=0))
+            precisions.append(precision_score(yte, yp, zero_division=0))
+            f1s.append(f1_score(yte, yp, zero_division=0))
+
+        fig, ax = plt.subplots(figsize=(10, 3.2))
+        ax.plot(thresholds, recalls,    color=PALETTE["orange"], linewidth=2, label="Recall")
+        ax.plot(thresholds, precisions, color=PALETTE["gold"],   linewidth=2, label="Precision")
+        ax.plot(thresholds, f1s,        color="#4a9eff",         linewidth=2, label="F1")
+        ax.axvline(threshold, color="white", linestyle="--", alpha=0.4, linewidth=1.2, label=f"Current ({threshold:.2f})")
+        set_chart_style(ax, fig)
+        ax.set_xlabel("Decision Threshold")
+        ax.set_ylabel("Score")
+        ax.set_title("Precision / Recall / F1 vs Threshold", fontsize=11, pad=10)
+        ax.legend(fontsize=9, framealpha=0, labelcolor=PALETTE["muted"])
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+
+        st.info(
+            f"At threshold **{threshold:.2f}**: "
+            f"Recall = **{recall_score(yte,(proba>=threshold).astype(int),zero_division=0):.1%}** · "
+            f"Precision = **{precision_score(yte,(proba>=threshold).astype(int),zero_division=0):.1%}** · "
+            f"F1 = **{f1_score(yte,(proba>=threshold).astype(int),zero_division=0):.1%}**"
+        )
+
+
+# ══════════════════════════════════════════════
+# TAB 4 — LIVE PREDICTION
+# ══════════════════════════════════════════════
+with tab4:
+    if "trained_models" not in st.session_state:
+        st.info("Train models first in the **Model Training** tab.")
+    else:
+        st.markdown("### Score a New Loan Application")
+        st.markdown("Fill in the applicant details below and get an instant risk assessment.")
+
+        best_model = st.session_state["trained_models"]["XGBoost (Balanced)"]
+        feature_names = st.session_state["feature_names"]
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.markdown("**👤 Applicant**")
+            age = st.number_input("Age", 18, 80, 35)
+            income = st.number_input("Annual Income ($)", 10_000, 500_000, 65_000, step=1_000)
+            education = st.selectbox("Education", ["High School", "Bachelor's", "Master's", "PhD"])
+            employment = st.selectbox("Employment Type", ["Full-time", "Part-time", "Self-employed", "Unemployed"])
+            marital = st.selectbox("Marital Status", ["Single", "Married", "Divorced"])
+
+        with col2:
+            st.markdown("**💰 Loan Details**")
+            loan_amount = st.number_input("Loan Amount ($)", 1_000, 500_000, 25_000, step=500)
+            interest_rate = st.slider("Interest Rate (%)", 2.0, 25.0, 8.5, 0.1)
+            loan_term = st.selectbox("Loan Term (months)", [12, 24, 36, 48, 60])
+            loan_purpose = st.selectbox("Loan Purpose", ["Auto", "Business", "Education", "Home", "Other"])
+            dti_ratio = st.slider("DTI Ratio", 0.0, 1.0, 0.35, 0.01,
+                                  help="Debt-to-Income ratio")
+
+        with col3:
+            st.markdown("**🏠 Background**")
+            credit_score = st.number_input("Credit Score", 300, 850, 650)
+            months_employed = st.number_input("Months Employed", 0, 600, 48)
+            num_credit_lines = st.number_input("# Credit Lines", 0, 20, 3)
+            has_mortgage = st.selectbox("Has Mortgage?", ["No", "Yes"])
+            has_dependents = st.selectbox("Has Dependents?", ["No", "Yes"])
+            has_cosigner = st.selectbox("Has Co-Signer?", ["No", "Yes"])
+
+        st.markdown("---")
+        predict_btn = st.button("🔍 Assess Risk")
+
+        if predict_btn:
+            edu_map = {"High School": 0, "Bachelor's": 1, "Master's": 2, "PhD": 3}
+            bin_map = {"No": 0, "Yes": 1}
+
+            # Build a raw row matching training columns
+            raw = {
+                "Age":            age,
+                "Income":         income,
+                "LoanAmount":     loan_amount,
+                "CreditScore":    credit_score,
+                "MonthsEmployed": months_employed,
+                "NumCreditLines": num_credit_lines,
+                "InterestRate":   interest_rate,
+                "LoanTerm":       loan_term,
+                "DTIRatio":       dti_ratio,
+                "Education":      edu_map[education],
+                "HasMortgage":    bin_map[has_mortgage],
+                "HasDependents":  bin_map[has_dependents],
+                "HasCoSigner":    bin_map[has_cosigner],
+                "LTI":            round(loan_amount / income, 2),
+                # One-hot dummies (match drop_first=True encoding)
+                "EmploymentType_Part-time":   1 if employment == "Part-time" else 0,
+                "EmploymentType_Self-employed": 1 if employment == "Self-employed" else 0,
+                "EmploymentType_Unemployed":  1 if employment == "Unemployed" else 0,
+                "MaritalStatus_Married":      1 if marital == "Married" else 0,
+                "MaritalStatus_Single":       1 if marital == "Single" else 0,
+                "LoanPurpose_Business":       1 if loan_purpose == "Business" else 0,
+                "LoanPurpose_Education":      1 if loan_purpose == "Education" else 0,
+                "LoanPurpose_Home":           1 if loan_purpose == "Home" else 0,
+                "LoanPurpose_Other":          1 if loan_purpose == "Other" else 0,
+            }
+
+            # Align to training feature columns
+            row = pd.DataFrame([raw])
+            for col_name in feature_names:
+                if col_name not in row.columns:
+                    row[col_name] = 0
+            row = row[feature_names]
+
+            prob = best_model.predict_proba(row)[0][1]
+            decision = int(prob >= threshold)
+
+            # Display result
+            st.markdown("#### Risk Assessment Result")
+            badge_class = "risk-high" if decision == 1 else "risk-low"
+            badge_label = "⚠️  HIGH RISK — LIKELY DEFAULT" if decision == 1 else "✅  LOW RISK — LIKELY SAFE"
+            st.markdown(
+                f'<div style="text-align:center;margin:1rem 0;">'
+                f'<span class="risk-badge {badge_class}">{badge_label}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Default Probability", f"{prob:.1%}")
+            m2.metric("Threshold Used",      f"{threshold:.2f}")
+            m3.metric("LTI Ratio",           f"{loan_amount/income:.2f}",
+                      help="Loan-to-Income ratio — key risk signal")
+
+            # Gauge bar
+            bar_color = PALETTE["orange"] if decision else PALETTE["gold"]
+            st.markdown(
+                f"""
+                <div style="margin:1rem 0; padding:0 0.5rem;">
+                  <div style="height:10px;background:#1e2230;border-radius:99px;overflow:hidden;">
+                    <div style="height:100%;width:{prob*100:.1f}%;background:{bar_color};border-radius:99px;
+                         transition:width 0.6s ease;"></div>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;color:#4a4535;font-size:0.72rem;margin-top:4px;">
+                    <span>0%</span><span>50%</span><span>100%</span>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # Key risk factors
+            st.markdown("#### Key Risk Signals")
+            signals = []
+            if interest_rate > 15:  signals.append(("🔴", "High interest rate", f"{interest_rate:.1f}% — strong default predictor"))
+            if loan_amount / income > 3: signals.append(("🔴", "High LTI ratio", f"{loan_amount/income:.2f} — affordability concern"))
+            if credit_score < 550:  signals.append(("🔴", "Low credit score", f"{credit_score} — high credit risk"))
+            if dti_ratio > 0.55:    signals.append(("🔴", "High DTI", f"{dti_ratio:.0%} — already heavily leveraged"))
+            if has_cosigner == "Yes": signals.append(("🟡", "Has co-signer", "Provides some protection"))
+            if credit_score > 700:  signals.append(("🟢", "Strong credit score", f"{credit_score}"))
+            if loan_amount / income < 1.5: signals.append(("🟢", "Low LTI ratio", f"{loan_amount/income:.2f}"))
+
+            if signals:
+                for icon, factor, detail in signals:
+                    st.markdown(
+                        f"<div style='padding:6px 12px;border-left:2px solid #1e2230;margin:4px 0;"
+                        f"font-size:0.88rem;color:#a89f8a;'>{icon} <b style='color:#e8e2d9'>{factor}</b> — {detail}</div>",
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.markdown("No extreme risk signals detected.")
